@@ -1,6 +1,8 @@
 import os
 import time
 import asyncio
+import re
+from audio_support import CapturedAudio, LatencyStats, PlaybackTiming, StreamingResampler
 import numpy as np
 from typing import Callable, Optional
 from google import genai
@@ -21,11 +23,13 @@ class GeminiLiveAudioSession:
         voice_name: str = "Puck",
         sample_rate: int = 16000,
         channel_name: str = "channel",
+        output_sample_rate: int = 24000,
     ) -> None:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.target_lang = target_lang
         self.voice_name = voice_name if voice_name in VALID_VOICE_NAMES else "Puck"
         self.sample_rate = sample_rate
+        self.output_sample_rate = output_sample_rate
         self.channel_name = channel_name
 
         self.client: Optional[genai.Client] = None
@@ -35,17 +39,32 @@ class GeminiLiveAudioSession:
             except Exception as e:
                 print(f"[GeminiLiveAudioSession:{self.channel_name}] Init client error: {e}")
 
-        self.is_running: bool = False
-        self.is_turn_complete: bool = False
-        self.last_audio_received_time: float = 0.0
-        self.first_input_audio_time: float = 0.0
-        self.first_audio_received_time: float = 0.0
-        self.measured_latency_ms: int = 0
-        self._turn_input_times: list[float] = []
-        self._turn_output_times: list[float] = []
+        self.is_running = False
+        self.is_turn_complete = False
+        self.last_audio_received_time = 0.0
+        self.measured_latency_ms = None
+        self._captured_at = None
+        self._sent_at = None
+        self._first_audio = False
+        self._awaiting_response = False
+        self._tasks = set()
+        self._runner = None
+        self._finished = asyncio.Event()
+        self._turn_done = asyncio.Event()
+        self._resampler = None
+        self._source_rate = None
+        self._pending_timing = None
+        self.send_to_audio = LatencyStats()
+        self.capture_to_audio = LatencyStats()
+        self.capture_to_playback = LatencyStats()
+        self.receive_to_playback = LatencyStats()
+        self.send_wait = LatencyStats()
+        self.simulated = False
+        self._failed = False
+        self._has_audio_input = False
 
         # Callbacks for audio, text, telemetry and completion
-        self.on_audio_chunk: Optional[Callable[[np.ndarray], None]] = None
+        self.on_audio_chunk: Optional[Callable[[np.ndarray, Optional[PlaybackTiming]], None]] = None
         self.on_stt_result: Optional[Callable[[str, bool], None]] = None
         self.on_translated_result: Optional[Callable[[str], None]] = None
         self.on_error: Optional[Callable[[str, str], None]] = None
@@ -54,6 +73,7 @@ class GeminiLiveAudioSession:
 
     def set_api_key(self, api_key: str) -> None:
         """Update Gemini API Key dynamically."""
+        self._finished.clear()
         self.api_key = api_key.strip()
         if self.api_key:
             try:
@@ -76,55 +96,115 @@ class GeminiLiveAudioSession:
     def _report_error(self, message: str, error_type: str = "API_ERROR") -> None:
         """Log error and notify UI callback."""
         print(f"[GeminiLive:{self.channel_name} ERROR] ({error_type}) {message}")
+        if error_type != "NO_API_KEY":
+            self._failed = True
         if self.on_error:
             self.on_error(message, error_type)
 
-    @staticmethod
-    def _is_normal_closure(error: Optional[Exception]) -> bool:
-        """Check if exception represents a standard WebSocket closure, cancellation, or ping timeout."""
-        if error is None:
-            return True
-        err_msg = str(error)
-        closure_signatures = (
-            "1000",
-            "1001",
-            "1005",
-            "1006",
-            "1011",
-            "ConnectionClosed",
-            "ConnectionClosedOK",
-            "ConnectionClosedError",
-            "keepalive ping timeout",
-            "no close frame received",
-            "sent 1000",
-            "sent 1001",
-            "sent 1006",
-            "sent 1011",
-            "closed session",
-            "Session closed",
-            "Cannot write to closing transport",
-            "CancelledError",
-        )
-        return any(phrase in err_msg for phrase in closure_signatures)
+    def metrics(self):
+        return {"send_to_audio": self.send_to_audio.snapshot(),
+                "capture_to_audio": self.capture_to_audio.snapshot(),
+                "capture_to_playback_estimate": self.capture_to_playback.snapshot(),
+                "receive_to_playback_estimate": self.receive_to_playback.snapshot(),
+                "send_wait": self.send_wait.snapshot(), "simulated": self.simulated}
 
-    async def run(
+    def mark_playback(self, timing: PlaybackTiming, submitted_at: float, output_latency: float):
+        # Driver latency is an estimate, not an acoustic loopback measurement.
+        estimated_at = submitted_at + output_latency
+        self.capture_to_playback.add((estimated_at - timing.captured_at) * 1000)
+        self.receive_to_playback.add((estimated_at - timing.received_at) * 1000)
+
+    async def finish(self, input_queue, timeout: float = 10.0):
+        if self._finished.is_set():
+            return not self._failed
+        try:
+            await asyncio.wait_for(input_queue.put(None), timeout)
+            await asyncio.wait_for(self._finished.wait(), timeout)
+        except asyncio.TimeoutError:
+            self._report_error("Не отримано завершення перекладу до таймауту.", "DRAIN_TIMEOUT")
+            self.stop()
+            await self._finished.wait()
+        return not self._failed
+
+    def _emit_audio(self, raw: bytes, mime_type: str):
+        match = re.search(r"rate=(\d+)", mime_type)
+        source_rate = int(match.group(1)) if match else 24000
+        if self._resampler is None:
+            self._source_rate = source_rate
+            self._resampler = StreamingResampler(source_rate, self.output_sample_rate)
+        elif source_rate != self._source_rate:
+            raise ValueError("Gemini changed PCM sample rate within a turn")
+        now = time.monotonic()
+        self.last_audio_received_time = now
+        if not self._first_audio:
+            if self._captured_at is not None and self._sent_at is not None:
+                self.measured_latency_ms = round((now - self._sent_at) * 1000)
+                self.send_to_audio.add((now - self._sent_at) * 1000)
+                self.capture_to_audio.add((now - self._captured_at) * 1000)
+                self._pending_timing = PlaybackTiming(self._captured_at, now)
+            self._first_audio = True
+        samples = self._resampler.process(np.frombuffer(raw, dtype="<i2"))
+        if self.on_audio_chunk and len(samples):
+            self.on_audio_chunk(samples, self._pending_timing)
+            self._pending_timing = None
+
+    def _complete_turn(self):
+        if self._resampler is not None:
+            tail = self._resampler.process(np.empty(0, dtype=np.int16), last=True)
+            if self.on_audio_chunk and len(tail):
+                self.on_audio_chunk(tail, self._pending_timing)
+        self._resampler = None
+        self._source_rate = None
+        self._pending_timing = None
+        self.is_turn_complete = True
+        self._awaiting_response = False
+        self._turn_done.set()
+        self._captured_at = self._sent_at = None
+        self._first_audio = False
+        if self.on_turn_complete:
+            self.on_turn_complete()
+
+    async def run(self, input_queue: asyncio.Queue) -> None:
+        self._runner = asyncio.current_task()
+        self._finished.clear()
+        try:
+            await self._run(input_queue)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._report_error(str(exc), "SESSION_ERROR")
+        finally:
+            self.is_running = False
+            self._finished.set()
+
+    async def _run(
         self,
-        input_queue: asyncio.Queue[bytes],
+        input_queue: asyncio.Queue,
     ) -> None:
         """Runs bidirectional streaming audio translation session with Gemini Live API."""
         self.is_running = True
+        self._finished.clear()
         self.is_turn_complete = False
-        self.last_audio_received_time = time.time()
-        self.first_input_audio_time = 0.0
-        self.first_audio_received_time = 0.0
-        self.measured_latency_ms = 0
-
-        if not self.client or not self.api_key:
-            self._report_error(
-                "Gemini API ключ не вказано. Запуск у демонстраційному режимі емуляції.",
-                "NO_API_KEY"
-            )
-            await self._run_simulation(input_queue)
+        self._turn_done.clear()
+        self._captured_at = self._sent_at = None
+        self._first_audio = self._awaiting_response = False
+        self._failed = self._has_audio_input = False
+        self._resampler = None
+        self._pending_timing = None
+        self.measured_latency_ms = None
+        self.send_to_audio = LatencyStats()
+        self.capture_to_audio = LatencyStats()
+        self.capture_to_playback = LatencyStats()
+        self.receive_to_playback = LatencyStats()
+        self.send_wait = LatencyStats()
+        self.simulated = not self.client or not self.api_key
+        if self.simulated:
+            self._report_error("Gemini API ключ не вказано. Демонстраційний режим, метрики перекладу недоступні.", "NO_API_KEY")
+            try:
+                await self._run_simulation(input_queue)
+            finally:
+                self.is_running = False
+                self._finished.set()
             return
 
         # Ensure voice name is strictly pinned to a valid prebuilt voice
@@ -174,201 +254,134 @@ class GeminiLiveAudioSession:
         )
 
         try:
-            print(f"[GeminiLiveAudioSession:{self.channel_name}] Connecting (target: {self.target_lang}, voice: {self.voice_name})...")
-            async with self.client.aio.live.connect(
-                model="gemini-3.5-live-translate-preview",
-                config=config,
-            ) as session:
-                print(f"[GeminiLiveAudioSession:{self.channel_name}] Live session connected successfully.")
-
-                async def send_audio_worker() -> None:
-                    """Continuously stream audio chunks to Gemini."""
+            async with self.client.aio.live.connect(model="gemini-3.5-live-translate-preview", config=config) as session:
+                async def send_audio_worker():
                     while self.is_running:
-                        try:
-                            chunk = await input_queue.get()
-                            if chunk is None or not self.is_running:
-                                break
+                        chunk = await input_queue.get()
+                        if chunk is None:
+                            # A completion from an earlier reply must not authorize
+                            # cancelling a final reply that is still in flight.
+                            self._turn_done.clear()
+                            await session.send_realtime_input(audio_stream_end=True)
+                            return
+                        if not isinstance(chunk, CapturedAudio):
+                            raise TypeError("Audio input must include a monotonic capture timestamp")
+                        now = time.monotonic()
+                        self.send_wait.add((now - chunk.captured_at) * 1000)
+                        if now - chunk.captured_at > 5.0:
+                            raise RuntimeError("Аудіо відстає більш ніж на 5 с; сесію зупинено без прихованої втрати мовлення.")
+                        pcm = np.frombuffer(chunk.data, dtype="<i2").astype(np.float32)
+                        # Quiet speech also needs a final response. The level gate below
+                        # controls timing estimates only, never whether input is drained.
+                        if np.any(pcm):
+                            self._has_audio_input = True
+                            self._awaiting_response = True
+                            self.is_turn_complete = False
+                            self._turn_done.clear()
+                        # Only anchor an estimate at voiced input; silence must not inflate latency.
+                        # This is a level gate for metrics, not a VAD that discards input audio.
+                        if len(pcm) and np.sqrt(np.mean(pcm * pcm)) > 300:
+                            if self._captured_at is None:
+                                self._captured_at = chunk.captured_at
+                                self._sent_at = now
+                        await session.send_realtime_input(audio=types.Blob(data=chunk.data, mime_type=f"audio/pcm;rate={self.sample_rate}"))
 
-                            if self.first_input_audio_time == 0.0:
-                                self.first_input_audio_time = time.time()
-
-                            await session.send_realtime_input(
-                                audio=types.Blob(
-                                    data=chunk,
-                                    mime_type=f"audio/pcm;rate={self.sample_rate}",
-                                )
-                            )
-                        except asyncio.CancelledError:
-                            break
-                        except Exception as e:
-                            if self.is_running and not self._is_normal_closure(e):
-                                self._report_error(f"Помилка відправки аудіо: {e}", "SEND_ERROR")
-                            break
-
-                async def receive_audio_worker() -> None:
-                    """Receive real-time translated audio chunks and transcriptions from Gemini."""
-                    try:
+                async def receive_audio_worker():
+                    while self.is_running:
+                        received = False
+                        completed = False
+                        last_content = None
                         async for response in session.receive():
-                            if not self.is_running:
-                                break
-
+                            received = True
                             content = response.server_content
+                            last_content = content
                             if not content:
                                 continue
-
-                            # Process received translated audio PCM (24kHz -> 16kHz resample)
-                            if content.model_turn:
-                                for part in content.model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        now = time.time()
-                                        self.last_audio_received_time = now
-                                        if self.first_audio_received_time == 0.0 and self.first_input_audio_time > 0:
-                                            self.first_audio_received_time = now
-                                            self.measured_latency_ms = int(
-                                                (self.first_audio_received_time - self.first_input_audio_time) * 1000
-                                            )
-
-                                        raw_pcm_24k = part.inline_data.data
-                                        audio_24k = np.frombuffer(raw_pcm_24k, dtype=np.int16)
-                                        
-                                        # Resample 24kHz down to 16kHz
-                                        if len(audio_24k) > 0:
-                                            num_samples_16k = int(len(audio_24k) * 2 / 3)
-                                            indices = np.arange(num_samples_16k) * 1.5
-                                            idx_floor = indices.astype(np.intp)
-                                            idx_floor = np.clip(idx_floor, 0, len(audio_24k) - 2)
-                                            frac = (indices - idx_floor).astype(np.float32)
-                                            audio_16k = ((1.0 - frac) * audio_24k[idx_floor] + frac * audio_24k[idx_floor + 1]).astype(np.int16)
-                                            
-                                            if self.on_audio_chunk:
-                                                self.on_audio_chunk(audio_16k)
-
-                            # User input transcription (Source text)
-                            if content.input_transcription and content.input_transcription.text:
-                                if self.on_stt_result:
-                                    self.on_stt_result(content.input_transcription.text, True)
-
-                            # Output translation transcription (Target text)
-                            if content.output_transcription and content.output_transcription.text:
-                                if self.on_translated_result:
-                                    self.on_translated_result(content.output_transcription.text)
-
-                            # Turn complete
-                            if content.turn_complete:
-                                self.is_turn_complete = True
-                                # Update rolling latency if we have timing data
-                                if self.first_input_audio_time > 0 and self.first_audio_received_time > 0:
-                                    self.measured_latency_ms = int(
-                                        (self.first_audio_received_time - self.first_input_audio_time) * 1000
-                                    )
-                                # Reset for next turn
-                                self.first_input_audio_time = 0.0
-                                self.first_audio_received_time = 0.0
-                                if self.on_turn_complete:
-                                    self.on_turn_complete()
-
-                            # Interruption handling
                             if content.interrupted:
+                                # Discard only this channel's interrupted output and filter state.
+                                self._resampler = None
+                                self._source_rate = None
+                                self._pending_timing = None
+                                self._first_audio = False
                                 if self.on_interrupt:
                                     self.on_interrupt()
+                                continue
+                            if content.model_turn:
+                                for part in content.model_turn.parts or []:
+                                    if part.inline_data and part.inline_data.data:
+                                        self._emit_audio(part.inline_data.data, part.inline_data.mime_type or "audio/pcm;rate=24000")
+                            if content.input_transcription and content.input_transcription.text and self.on_stt_result:
+                                self.on_stt_result(content.input_transcription.text, True)
+                            if content.output_transcription and content.output_transcription.text and self.on_translated_result:
+                                self.on_translated_result(content.output_transcription.text)
+                            if content.turn_complete:
+                                self._complete_turn()
+                                completed = True
+                        if not received:
+                            raise ConnectionError("Gemini closed the audio receive stream")
+                        if not completed and getattr(last_content, "interaction_status", None) == types.InteractionStatus.IDLE:
+                            self._complete_turn()
+                        # SDK receive() yields one completed interaction. Read the next one.
 
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as e:
-                        if self.is_running and not self._is_normal_closure(e):
-                            self._report_error(f"Помилка прийому аудіопотоку: {e}", "RECV_ERROR")
-
-                send_task = asyncio.create_task(send_audio_worker())
-                recv_task = asyncio.create_task(receive_audio_worker())
-
-                # Wait for send to finish (input exhausted), then give recv a drain window
-                try:
-                    await send_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-                
-                # Give receiver a grace period to get remaining translated chunks
-                if self.is_running and not recv_task.done():
-                    try:
-                        await asyncio.wait_for(recv_task, timeout=5.0)
-                    except asyncio.TimeoutError:
-                        recv_task.cancel()
-                        try:
-                            await recv_task
-                        except asyncio.CancelledError:
-                            pass
-                    except Exception as e:
-                        if not self._is_normal_closure(e):
-                            self._report_error(f"Drain error: {e}", "DRAIN_ERROR")
-                
-                # Cancel if still running
-                for task in [send_task, recv_task]:
-                    if not task.done():
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-
-                for task in [send_task, recv_task]:
-                    if task.done():
-                        exc = task.exception()
-                        if exc and not isinstance(exc, asyncio.CancelledError) and self.is_running and not self._is_normal_closure(exc):
-                            self._report_error(f"Збій у потоці сесії: {exc}", "WORKER_EXCEPTION")
-
-        except APIError as e:
-            if self.is_running and not self._is_normal_closure(e):
-                msg = f"Помилка Gemini API [{e.code}]: {e.message}"
-                self._report_error(msg, "API_ERROR")
-        except Exception as e:
-            if not self.is_running or self._is_normal_closure(e):
-                pass
-            else:
-                err_str = str(e)
-                if "403" in err_str or "API_KEY_INVALID" in err_str or "API key not valid" in err_str:
-                    self._report_error("Недійсний Gemini API ключ (403/401). Перевірте ключ у налаштуваннях.", "INVALID_KEY")
-                elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    self._report_error("Перевищено ліміт запитів Gemini API (429 Rate Limit Exceeded).", "RATE_LIMIT")
-                else:
-                    self._report_error(f"Не вдалося встановити сесію Live Translate: {err_str}", "CONNECT_FAILED")
+                sender = asyncio.create_task(send_audio_worker())
+                receiver = asyncio.create_task(receive_audio_worker())
+                self._tasks = {sender, receiver}
+                done, _ = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
+                if receiver in done:
+                    await receiver  # Propagate failure and cancel the sender in finally.
+                    raise ConnectionError("Gemini receiver stopped unexpectedly")
+                await sender
+                if self._has_audio_input:
+                    turn_wait = asyncio.create_task(self._turn_done.wait())
+                    self._tasks.add(turn_wait)
+                    done, _ = await asyncio.wait({turn_wait, receiver}, timeout=10.0, return_when=asyncio.FIRST_COMPLETED)
+                    if receiver in done:
+                        await receiver
+                    if turn_wait not in done:
+                        raise TimeoutError("Gemini did not finish the final speech turn")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.is_running:
+                # Network failures (including 1006/1011/ping timeouts) are actionable.
+                message = str(exc)
+                if isinstance(exc, APIError):
+                    message = f"Gemini API [{exc.code}]: {exc.message}"
+                self._report_error(message, "SESSION_ERROR")
         finally:
             self.is_running = False
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
+            if self._tasks:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+            self._tasks.clear()
+            self._finished.set()
 
-    async def _run_simulation(
-        self,
-        input_queue: asyncio.Queue[bytes],
-    ) -> None:
-        """Simulate translation stream when no API key is provided."""
-        sim_counter = 0
+    async def _run_simulation(self, input_queue):
+        last_tone = 0.0
         while self.is_running:
-            await asyncio.sleep(2.0)
-            if not input_queue.empty():
-                await input_queue.get()
-                sim_counter += 1
-                now = time.time()
-                if self.first_input_audio_time == 0.0:
-                    self.first_input_audio_time = now - 0.75
-                self.last_audio_received_time = now
-                self.first_audio_received_time = now
-                self.measured_latency_ms = 750
+            chunk = await input_queue.get()
+            if chunk is None:
+                self._complete_turn()
+                return
+            now = time.monotonic()
+            if now - last_tone < 2.0:
+                continue
+            last_tone = now
+            if self.on_translated_result:
+                self.on_translated_result("Демонстраційний сигнал — це не переклад Gemini.")
+            t = np.arange(round(self.output_sample_rate * 0.4)) / self.output_sample_rate
+            tone = (np.sin(2 * np.pi * 440 * t) * 0.25 * 32767).astype(np.int16)
+            if self.on_audio_chunk:
+                self.on_audio_chunk(tone, None)
+            if self.on_turn_complete:
+                self.on_turn_complete()
 
-                if self.channel_name == "outgoing":
-                    if self.on_stt_result:
-                        self.on_stt_result(f"Я розмовляю українською в мікрофон [репліка {sim_counter}]", True)
-                    if self.on_translated_result:
-                        self.on_translated_result(f"I am speaking English ({self.voice_name}) [phrase {sim_counter}]")
-                else:
-                    if self.on_stt_result:
-                        self.on_stt_result(f"Speaking in the meeting stream [phrase {sim_counter}]", True)
-                    if self.on_translated_result:
-                        self.on_translated_result(f"Співрозмовник говорить у мітингу ({self.voice_name}) [фраза {sim_counter}]")
-
-                freq = 440 if self.channel_name == "outgoing" else 520
-                t = np.linspace(0, 0.4, int(self.sample_rate * 0.4), False)
-                tone = (np.sin(2 * np.pi * freq * t) * 0.25 * 32767).astype(np.int16)
-                if self.on_audio_chunk:
-                    self.on_audio_chunk(tone)
-
-    def stop(self) -> None:
-        """Stops the live translation session."""
+    def stop(self):
+        """Abort immediately; normal stop uses finish() to preserve the final speech turn."""
         self.is_running = False
+        for task in self._tasks:
+            task.cancel()
+        if self._runner is not None and not self._runner.done() and self._runner is not asyncio.current_task():
+            self._runner.cancel()

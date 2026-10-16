@@ -7,6 +7,7 @@ import { CallView } from "./components/CallView";
 import { DubbingView } from "./components/DubbingView";
 import { TestingView } from "./components/TestingView";
 import { LogConsole } from "./components/LogConsole";
+import { AudioDiagnostics } from "./components/AudioDiagnostics";
 import {
   Radio,
   PhoneCall,
@@ -33,7 +34,7 @@ export const App: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
 
   const [duckingFactor, setDuckingFactor] = useState<number>(0.2);
-  const [jitterBufferMs, setJitterBufferMs] = useState<number>(75);
+  const [jitterBufferMs, setJitterBufferMs] = useState<number>(40);
 
   const backendState = useBackendState();
   const audioDevices = useAudioDevices();
@@ -76,7 +77,9 @@ export const App: React.FC = () => {
               }`}
             />
             <span className="text-xs font-semibold text-slate-300">
-              {backendState.is_call_active
+              {backendState.is_stopping
+                ? "Завершення перекладу…"
+                : backendState.is_call_active
                 ? "Дзвінок активний"
                 : backendState.is_dubbing_active
                 ? "Дублювання відео активне"
@@ -89,6 +92,8 @@ export const App: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {backendState.audio_metrics && <AudioDiagnostics metrics={backendState.audio_metrics} />}
 
       {/* Shared Configuration Bar: Partner Language & API Key */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4">

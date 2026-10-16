@@ -18,7 +18,7 @@ else:
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from audio_engine import DualChannelAudioEngine
 from ai_pipeline import GeminiLiveAudioSession
@@ -72,6 +72,18 @@ async def lifespan(app: FastAPI):
             await broadcast_task
         except asyncio.CancelledError:
             pass
+        audio_engine.is_call_running = audio_engine.is_dubbing_running = False
+        audio_engine.is_sample_running = audio_engine.is_mic_test_running = False
+        outgoing_ai.stop()
+        incoming_ai.stop()
+        for tasks in (active_call_tasks, active_dubbing_tasks, active_sample_tasks, active_mic_test_tasks):
+            await cancel_tasks(tasks)
+        audio_engine._outgoing_playback_running = audio_engine._incoming_playback_running = False
+        playback_tasks = list(audio_engine._playback_tasks)
+        for task in playback_tasks:
+            task.cancel()
+        await asyncio.gather(*playback_tasks, return_exceptions=True)
+        await asyncio.to_thread(audio_engine.terminate)
 
 
 app = FastAPI(
@@ -109,8 +121,8 @@ incoming_ai = GeminiLiveAudioSession(
 outgoing_ai.on_audio_chunk = audio_engine.push_outgoing_tts_chunk
 incoming_ai.on_audio_chunk = audio_engine.push_incoming_tts_chunk
 
-outgoing_ai.on_interrupt = audio_engine.clear_playback_buffers
-incoming_ai.on_interrupt = audio_engine.clear_playback_buffers
+outgoing_ai.on_interrupt = audio_engine.outgoing_playback_buffer.clear
+incoming_ai.on_interrupt = audio_engine.incoming_playback_buffer.clear
 
 # Supported Neural Voices in Gemini Live
 AVAILABLE_VOICES = [
@@ -132,14 +144,14 @@ class CallStartRequest(BaseModel):
     outgoing_voice: str = "Puck"
     incoming_voice: str = "Aoede"
     ducking_factor: float = 0.2
-    jitter_buffer_ms: int = 150
+    jitter_buffer_ms: int = Field(default=40, ge=30, le=300)
     api_key: Optional[str] = None
 
 class SampleStartRequest(BaseModel):
     sample_id: str
     headphones_index: Optional[int] = None
     ducking_factor: float = 0.2
-    jitter_buffer_ms: int = 150
+    jitter_buffer_ms: int = Field(default=40, ge=30, le=300)
     partner_lang: str = "en"
     voice_name: str = "Aoede"
     api_key: Optional[str] = None
@@ -150,7 +162,7 @@ class DubbingStartRequest(BaseModel):
     source_lang: str = "en"
     voice_name: str = "Aoede"
     ducking_factor: float = 0.2
-    jitter_buffer_ms: int = 150
+    jitter_buffer_ms: int = Field(default=40, ge=30, le=300)
     api_key: Optional[str] = None
 
 class MicTestStartRequest(BaseModel):
@@ -163,7 +175,7 @@ class DuckingRequest(BaseModel):
     ducking_factor: float
 
 class JitterBufferRequest(BaseModel):
-    jitter_buffer_ms: int
+    jitter_buffer_ms: int = Field(ge=30, le=300)
 
 class AppState:
     def __init__(self) -> None:
@@ -175,9 +187,10 @@ class AppState:
         self.partner_lang: str = "en"
         self.outgoing_voice: str = "Puck"
         self.incoming_voice: str = "Aoede"
-        self.jitter_buffer_ms: int = 75
+        self.jitter_buffer_ms: int = 40
         self.last_error: Optional[str] = None
-        self.mic_test_latency_ms: int = 0
+        self.mic_test_latency_ms: Optional[int] = None
+        self.is_stopping: bool = False
 
         # Outgoing (My Voice: UA -> Target)
         self.outgoing_stt: str = ""
@@ -276,6 +289,8 @@ def on_in_trans(text: str) -> None:
 def on_ai_error(error_msg: str, error_type: str) -> None:
     state.last_error = error_msg
     add_log_entry("ERROR", error_msg, f"GeminiAPI:{error_type}")
+    if error_type != "NO_API_KEY" and not state.is_stopping:
+        asyncio.create_task(stop_failed_session())
 
 outgoing_ai.on_stt_result = on_out_stt
 outgoing_ai.on_translated_result = on_out_trans
@@ -287,7 +302,15 @@ incoming_ai.on_translated_result = on_in_trans
 incoming_ai.on_error = on_ai_error
 incoming_ai.on_turn_complete = lambda: audio_engine.incoming_playback_buffer.flush()
 
-# 20 FPS Broadcast Loop
+audio_engine.on_audio_error = on_ai_error
+audio_engine.on_outgoing_playback = outgoing_ai.mark_playback
+audio_engine.on_incoming_playback = incoming_ai.mark_playback
+
+def audio_metrics():
+    return {**audio_engine.diagnostics(),
+            "outgoing_latency": outgoing_ai.metrics(), "incoming_latency": incoming_ai.metrics()}
+
+# Meters update at 10 Hz; audio never travels through this UI WebSocket.
 async def state_broadcast_loop() -> None:
     while True:
         if manager.active_connections:
@@ -302,6 +325,8 @@ async def state_broadcast_loop() -> None:
                 "incoming_voice": state.incoming_voice,
                 "jitter_buffer_ms": state.jitter_buffer_ms,
                 "mic_test_latency_ms": state.mic_test_latency_ms,
+                "audio_metrics": audio_metrics(),
+                "is_stopping": state.is_stopping,
                 "last_error": state.last_error,
                 "logs": list(in_memory_logs)[-40:],
                 "outgoing": {
@@ -321,7 +346,7 @@ async def state_broadcast_loop() -> None:
                 },
             }
             await manager.broadcast(payload)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
 
 # Built-in Samples Metadata
 SAMPLES_DIR = Path(__file__).parent / "samples"
@@ -374,21 +399,49 @@ active_sample_tasks: Set[asyncio.Task] = set()
 active_mic_test_tasks: Set[asyncio.Task] = set()
 
 async def cancel_tasks(task_set: Set[asyncio.Task]) -> None:
-    tasks = [t for t in task_set if not t.done()]
+    tasks = list(task_set)
     for t in tasks:
-        t.cancel()
+        if not t.done():
+            t.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     task_set.clear()
+
+@app.get("/metrics")
+async def get_metrics():
+    return audio_metrics()
 
 @app.get("/logs")
 def get_logs():
     return {"logs": list(in_memory_logs)}
 
+session_stop_lock = asyncio.Lock()
+
+async def finish_audio_tasks(tasks, sessions):
+    captures = [task for task in tasks if task.get_name().startswith("capture-")]
+    if captures:
+        await asyncio.gather(*captures, return_exceptions=True)
+    results = await asyncio.gather(*(session.finish(queue) for session, queue in sessions))
+    return all(results)
+
+async def stop_failed_session():
+    if state.is_call_active:
+        await stop_call()
+    elif state.is_dubbing_active:
+        await stop_dubbing()
+    elif state.is_testing_active:
+        await stop_sample_test()
+    elif state.is_mic_test_active:
+        await stop_mic_test_endpoint()
+
 @app.post("/call/start")
 async def start_call(req: CallStartRequest):
-    if state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
+    if state.is_stopping or state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
         return {"status": "already_running"}
+
+    if req.call_virtual_mic_index is None:
+        state.last_error = "Оберіть віртуальний мікрофон для відтворення вихідного перекладу."
+        raise HTTPException(status_code=400, detail=state.last_error)
 
     if req.outgoing_voice not in VALID_VOICE_IDS:
         raise HTTPException(status_code=400, detail=f"Невідомий голос для виходу: {req.outgoing_voice}")
@@ -437,13 +490,15 @@ async def start_call(req: CallStartRequest):
             headphones_index=req.headphones_index,
         )
     except Exception as e:
+        await asyncio.to_thread(audio_engine.stop_call)
         err_msg = f"Помилка аудіопристроїв: {e}"
         add_log_entry("ERROR", err_msg, "audio")
         state.last_error = err_msg
         raise HTTPException(status_code=500, detail=err_msg)
 
-    t1 = asyncio.create_task(audio_engine.outgoing_process_loop())
-    t2 = asyncio.create_task(audio_engine.incoming_process_loop())
+    audio_engine.start_playback(outgoing=True, incoming=req.call_input_index is not None)
+    t1 = asyncio.create_task(audio_engine.outgoing_process_loop(), name="capture-outgoing")
+    t2 = asyncio.create_task(audio_engine.incoming_process_loop(), name="capture-incoming")
     t3 = asyncio.create_task(outgoing_ai.run(audio_engine.outgoing_input_queue))
     t4 = asyncio.create_task(incoming_ai.run(audio_engine.incoming_input_queue))
     active_call_tasks.update([t1, t2, t3, t4])
@@ -453,20 +508,30 @@ async def start_call(req: CallStartRequest):
 
 @app.post("/call/stop")
 async def stop_call():
-    state.is_call_active = False
-    outgoing_ai.stop()
-    incoming_ai.stop()
-    # Gracefully drain remaining audio buffer to speakers/virtual mic
-    await audio_engine.graceful_stop_call(timeout=1.2)
-    await cancel_tasks(active_call_tasks)
+    async with session_stop_lock:
+        if not state.is_call_active and not active_call_tasks:
+            return {"status": "not_running"}
+        state.is_stopping = True
+        try:
+            audio_engine.is_call_running = False
+            complete = await finish_audio_tasks(active_call_tasks, [(outgoing_ai, audio_engine.outgoing_input_queue), (incoming_ai, audio_engine.incoming_input_queue)])
+            played = await audio_engine.graceful_stop_call()
+            complete = complete and played
+        finally:
+            await cancel_tasks(active_call_tasks)
+            state.is_call_active = state.is_stopping = False
     add_log_entry("INFO", "Синхронний дзвінок зупинено.", "call")
-    return {"status": "call_stopped"}
+    return {"status": "call_stopped", "complete": complete}
 
 # Media / YouTube Dubbing Endpoints
 @app.post("/dubbing/start")
 async def start_dubbing(req: DubbingStartRequest):
-    if state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
+    if state.is_stopping or state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
         return {"status": "already_running"}
+
+    if req.input_device_index is None:
+        state.last_error = "Оберіть аудіовхід для дублювання."
+        raise HTTPException(status_code=400, detail=state.last_error)
 
     if req.voice_name not in VALID_VOICE_IDS:
         raise HTTPException(status_code=400, detail=f"Невідомий голос для дубляжу: {req.voice_name}")
@@ -502,13 +567,15 @@ async def start_dubbing(req: DubbingStartRequest):
             headphones_index=req.headphones_index,
         )
     except Exception as e:
+        await asyncio.to_thread(audio_engine.stop_dubbing)
         err_msg = f"Помилка аудіопристроїв дублювання: {e}"
         add_log_entry("ERROR", err_msg, "audio")
         state.last_error = err_msg
         state.is_dubbing_active = False
         raise HTTPException(status_code=500, detail=err_msg)
 
-    t1 = asyncio.create_task(audio_engine.incoming_process_loop())
+    audio_engine.start_playback(incoming=req.input_device_index is not None)
+    t1 = asyncio.create_task(audio_engine.incoming_process_loop(), name="capture-incoming")
     t2 = asyncio.create_task(incoming_ai.run(audio_engine.incoming_input_queue))
     active_dubbing_tasks.update([t1, t2])
 
@@ -516,17 +583,24 @@ async def start_dubbing(req: DubbingStartRequest):
 
 @app.post("/dubbing/stop")
 async def stop_dubbing():
-    state.is_dubbing_active = False
-    incoming_ai.stop()
-    # Gracefully drain remaining audio buffer to headphones
-    await audio_engine.graceful_stop_dubbing(timeout=1.2)
-    await cancel_tasks(active_dubbing_tasks)
+    async with session_stop_lock:
+        if not state.is_dubbing_active and not active_dubbing_tasks:
+            return {"status": "not_running"}
+        state.is_stopping = True
+        try:
+            audio_engine.is_dubbing_running = False
+            complete = await finish_audio_tasks(active_dubbing_tasks, [(incoming_ai, audio_engine.incoming_input_queue)])
+            played = await audio_engine.graceful_stop_dubbing()
+            complete = complete and played
+        finally:
+            await cancel_tasks(active_dubbing_tasks)
+            state.is_dubbing_active = state.is_stopping = False
     add_log_entry("INFO", "Дублювання відео зупинено.", "dubbing")
-    return {"status": "dubbing_stopped"}
+    return {"status": "dubbing_stopped", "complete": complete}
 
 @app.post("/samples/start")
 async def start_sample_test(req: SampleStartRequest):
-    if state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
+    if state.is_stopping or state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
         return {"status": "already_running"}
 
     if req.voice_name not in VALID_VOICE_IDS:
@@ -565,24 +639,38 @@ async def start_sample_test(req: SampleStartRequest):
     try:
         audio_engine.start_sample_test(headphones_index=req.headphones_index)
     except Exception as e:
+        await asyncio.to_thread(audio_engine.stop_sample_test)
         err_msg = f"Помилка виводу звуку: {e}"
         add_log_entry("ERROR", err_msg, "audio")
         state.last_error = err_msg
         state.is_testing_active = False
         raise HTTPException(status_code=500, detail=err_msg)
 
+    audio_engine.start_playback(incoming=True)
     t_ai = asyncio.create_task(incoming_ai.run(audio_engine.incoming_input_queue))
     active_sample_tasks.add(t_ai)
 
     async def run_sample():
+        completed = False
         try:
             await audio_engine.sample_playback_loop(str(sample_path))
+            state.is_stopping = True
+            completed = await incoming_ai.finish(audio_engine.incoming_input_queue)
+            played = await audio_engine._finish_playback(timeout=15.0)
+            completed = completed and played
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            on_ai_error(str(exc), "SAMPLE_ERROR")
         finally:
             incoming_ai.stop()
-            audio_engine.stop_sample_test()
+            audio_engine._incoming_playback_running = False
+            await asyncio.gather(*list(audio_engine._playback_tasks), return_exceptions=True)
+            await asyncio.to_thread(audio_engine.stop_sample_test)
             state.is_testing_active = False
             state.active_sample_id = None
-            add_log_entry("INFO", f"Відтворення семплу '{sample_meta['title']}' завершено (усі фрази озвучено).", "sample")
+            state.is_stopping = False
+            add_log_entry("INFO", "Відтворення семплу завершено." if completed else "Відтворення семплу зупинено через помилку.", "sample")
 
     t_sample = asyncio.create_task(run_sample())
     active_sample_tasks.add(t_sample)
@@ -591,19 +679,23 @@ async def start_sample_test(req: SampleStartRequest):
 
 @app.post("/samples/stop")
 async def stop_sample_test():
-    state.is_testing_active = False
-    state.active_sample_id = None
-    incoming_ai.stop()
-    await cancel_tasks(active_sample_tasks)
-    audio_engine.stop_sample_test()
-    add_log_entry("INFO", "Тестування семплу зупинено.", "sample")
+    async with session_stop_lock:
+        if not state.is_testing_active and not active_sample_tasks:
+            return {"status": "not_running"}
+        state.is_stopping = True
+        audio_engine.is_sample_running = False
+        if active_sample_tasks:
+            await asyncio.gather(*list(active_sample_tasks), return_exceptions=True)
+        active_sample_tasks.clear()
+        state.is_testing_active = state.is_stopping = False
+        state.active_sample_id = None
     return {"status": "sample_testing_stopped"}
 
 # Microphone Testing Endpoints
 @app.post("/test_mic/start")
 async def start_mic_test_endpoint(req: MicTestStartRequest):
     """Start capturing mic audio, streaming to Gemini, and recording translated speech."""
-    if state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
+    if state.is_stopping or state.is_call_active or state.is_dubbing_active or state.is_testing_active or state.is_mic_test_active:
         return {"status": "already_running"}
 
     if req.voice_name not in VALID_VOICE_IDS:
@@ -621,7 +713,7 @@ async def start_mic_test_endpoint(req: MicTestStartRequest):
     state.outgoing_translation = ""
     state.outgoing_stt_history = []
     state.outgoing_trans_history = []
-    state.mic_test_latency_ms = 0
+    state.mic_test_latency_ms = None
     state.is_mic_test_active = True
 
     add_log_entry("INFO", f"Початок тесту мікрофона (UA -> {req.partner_lang}, голос: {req.voice_name}).", "mic_test")
@@ -629,13 +721,14 @@ async def start_mic_test_endpoint(req: MicTestStartRequest):
     try:
         audio_engine.start_mic_test(mic_index=req.mic_index)
     except Exception as e:
+        await asyncio.to_thread(audio_engine.stop_mic_test)
         err_msg = f"Помилка ініціалізації мікрофона: {e}"
         add_log_entry("ERROR", err_msg, "audio")
         state.last_error = err_msg
         state.is_mic_test_active = False
         raise HTTPException(status_code=500, detail=err_msg)
 
-    t_engine = asyncio.create_task(audio_engine.mic_test_loop())
+    t_engine = asyncio.create_task(audio_engine.mic_test_loop(), name="capture-mic-test")
     t_ai = asyncio.create_task(outgoing_ai.run(audio_engine.outgoing_input_queue))
     active_mic_test_tasks.update([t_engine, t_ai])
 
@@ -647,24 +740,22 @@ async def stop_mic_test_endpoint():
     if not state.is_mic_test_active:
         return {"status": "not_running"}
 
-    add_log_entry("INFO", "Фіналізація запису тесту мікрофона...", "mic_test")
-
-    # Give 1.8s grace period for in-flight translation chunks to arrive
-    await asyncio.sleep(1.8)
-
-    outgoing_ai.stop()
-    await cancel_tasks(active_mic_test_tasks)
-    file_path = audio_engine.stop_mic_test()
-    state.is_mic_test_active = False
-
-    latency = outgoing_ai.measured_latency_ms or 750
+    async with session_stop_lock:
+        state.is_stopping = True
+        try:
+            audio_engine.is_mic_test_running = False
+            complete = await finish_audio_tasks(active_mic_test_tasks, [(outgoing_ai, audio_engine.outgoing_input_queue)])
+            file_path = await asyncio.to_thread(audio_engine.stop_mic_test)
+        finally:
+            await cancel_tasks(active_mic_test_tasks)
+            state.is_mic_test_active = state.is_stopping = False
+    latency = outgoing_ai.measured_latency_ms
     state.mic_test_latency_ms = latency
-
-    add_log_entry("INFO", f"Тест мікрофона завершено. Затримка: {latency}мс. Готово до прослуховування.", "mic_test")
-
     return {
         "status": "mic_test_finished",
+        "complete": complete,
         "latency_ms": latency,
+        "metrics": outgoing_ai.metrics(),
         "stt_text": state.outgoing_stt,
         "translated_text": state.outgoing_translation,
         "audio_url": "http://127.0.0.1:8000/test_mic/audio",

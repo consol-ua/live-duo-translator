@@ -570,6 +570,11 @@ export const TestingView = React.memo<TestingViewProps>(({
           {/* Test Review & Audio Player Card */}
           {micTestResult && (
             <div className="bg-slate-900 border border-indigo-500/40 rounded-xl p-5 shadow-lg shadow-indigo-950/40 space-y-4">
+              {micTestResult.complete === false && (
+                <p role="alert" className="text-xs text-amber-300">
+                  Переклад завершено з помилкою. Запис може бути неповним; перевірте журнал.
+                </p>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-400">
                   <CheckCircle2 className="w-4 h-4" />
@@ -579,9 +584,9 @@ export const TestingView = React.memo<TestingViewProps>(({
                 {/* Latency Metric Badge */}
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-500/50 text-indigo-300 text-xs font-semibold">
                   <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  Затримка перекладу:
+                  До аудіовідповіді Gemini:
                   <span className="font-mono text-amber-300 font-bold">
-                    {micTestResult.latency_ms} мс
+                    {micTestResult.latency_ms === null ? "Не виміряно" : `${micTestResult.latency_ms} мс`}
                   </span>
                 </div>
               </div>

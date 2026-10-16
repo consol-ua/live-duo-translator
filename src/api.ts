@@ -53,7 +53,9 @@ export interface DualBackendState {
   outgoing_voice: string;
   incoming_voice: string;
   jitter_buffer_ms: number;
-  mic_test_latency_ms: number;
+  mic_test_latency_ms: number | null;
+  is_stopping?: boolean;
+  audio_metrics?: AudioMetrics;
   last_error: string | null;
   logs: LogEntry[];
   outgoing: StreamTelemetry;
@@ -102,11 +104,46 @@ export interface MicTestStartPayload {
 
 export interface MicTestResult {
   status: string;
-  latency_ms: number;
+  complete?: boolean;
+  latency_ms: number | null;
+  metrics?: ChannelLatency;
   stt_text: string;
   translated_text: string;
   audio_url: string;
   has_audio: boolean;
+}
+
+export interface LatencySummary {
+  latest_ms: number | null;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  samples: number;
+}
+
+export interface ChannelLatency {
+  send_to_audio: LatencySummary;
+  capture_to_audio: LatencySummary;
+  capture_to_playback_estimate: LatencySummary;
+  receive_to_playback_estimate: LatencySummary;
+  send_wait: LatencySummary;
+  simulated: boolean;
+}
+
+interface QueueMetrics {
+  queued_ms: number;
+  oldest_ms: number;
+  overloaded: boolean;
+}
+
+export interface AudioMetrics {
+  outgoing: { input: QueueMetrics; playback: QueueMetrics & { target_ms: number; underruns: number } };
+  incoming: { input: QueueMetrics; playback: QueueMetrics & { target_ms: number; underruns: number } };
+  outgoing_latency: ChannelLatency;
+  incoming_latency: ChannelLatency;
+  input_errors: number;
+  output_errors: number;
+  chunk_ms: number;
+  output_rate: number;
 }
 
 import { API_BASE } from './constants';

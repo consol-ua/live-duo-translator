@@ -19,6 +19,7 @@ export function useSessionControls(setDuckingFactor: (val: number) => void, setJ
   const is_call_active = useBackendState(state => state.is_call_active);
   const is_dubbing_active = useBackendState(state => state.is_dubbing_active);
   const is_testing_active = useBackendState(state => state.is_testing_active);
+  const is_stopping = useBackendState(state => state.is_stopping ?? false);
 
   const handleToggleCall = useCallback(async (params: CallStartPayload) => {
     setIsLoading(true);
@@ -107,7 +108,7 @@ export function useSessionControls(setDuckingFactor: (val: number) => void, setJ
   }, [setJitterBufferMs]);
 
   return {
-    isLoading,
+    isLoading: isLoading || is_stopping,
     handleToggleCall,
     handleToggleDubbing,
     handleToggleSampleTest,
