@@ -373,5 +373,16 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.engine.incoming_input_queue.queued_samples, 3200)
 
 
+    async def test_safe_close_stream_handles_stream_not_open_error(self):
+        self.engine.start_call(call_virtual_mic_index=1)
+        # Simulate PortAudio stream being invalid/closed already
+        def broken_is_active():
+            raise OSError("Stream not open")
+        self.engine.call_virtual_mic_stream.is_active = broken_is_active
+        # Must not raise OSError
+        self.engine.stop_call()
+        self.assertIsNone(self.engine.call_virtual_mic_stream)
+
+
 if __name__ == '__main__':
     unittest.main()

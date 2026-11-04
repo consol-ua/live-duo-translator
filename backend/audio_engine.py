@@ -339,21 +339,42 @@ class DualChannelAudioEngine:
     def _safe_read(self, stream, chunk_size):
         if stream is None:
             return None
-        with self._io_locks[id(stream)]:
-            return stream.read(chunk_size, exception_on_overflow=True)
+        lock = self._io_locks.get(id(stream))
+        if lock is None:
+            return None
+        with lock:
+            try:
+                # exception_on_overflow=False prevents PortAudio from throwing paInputOverflowed (-9981)
+                # when audio capture buffer encounters transient jitter on macOS CoreAudio.
+                return stream.read(chunk_size, exception_on_overflow=False)
+            except OSError as exc:
+                err_msg = str(exc).lower()
+                if getattr(exc, "errno", None) == pyaudio.paInputOverflowed or "overflow" in err_msg:
+                    self.input_overflows += 1
+                    return b"\x00" * (chunk_size * 2 * self.channels)
+                if getattr(exc, "errno", None) == -9988 or "stream closed" in err_msg or "not open" in err_msg:
+                    return None
+                raise
 
     def _safe_write(self, stream, data):
         if stream is None:
             return False
-        with self._io_locks[id(stream)]:
+        lock = self._io_locks.get(id(stream))
+        if lock is None:
+            return False
+        with lock:
             try:
-                stream.write(data, exception_on_underflow=True)
+                stream.write(data, exception_on_underflow=False)
             except OSError as exc:
-                if exc.errno != pyaudio.paOutputUnderflowed:
-                    raise
-                # PortAudio has accepted this block but reports an earlier gap.
-                # Count it; retrying the block would duplicate speech.
-                self.output_underflows += 1
+                err_msg = str(exc).lower()
+                if getattr(exc, "errno", None) == pyaudio.paOutputUnderflowed or "underflow" in err_msg:
+                    # PortAudio has accepted this block but reports an earlier gap.
+                    # Count it; retrying the block would duplicate speech.
+                    self.output_underflows += 1
+                    return True
+                if getattr(exc, "errno", None) == -9988 or "stream closed" in err_msg or "not open" in err_msg:
+                    return False
+                raise
         return True
 
     def _open_stream(self, **kwargs):
@@ -365,13 +386,29 @@ class DualChannelAudioEngine:
         with self._stream_lock:
             stream = getattr(self, stream_attr, None)
             if stream is not None:
-                with self._io_locks[id(stream)]:
+                lock = self._io_locks.get(id(stream))
+                if lock is not None:
+                    with lock:
+                        try:
+                            if stream.is_active():
+                                stream.stop_stream()
+                        except Exception:
+                            pass
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+                else:
                     try:
                         if stream.is_active():
                             stream.stop_stream()
-                    finally:
+                    except Exception:
+                        pass
+                    try:
                         stream.close()
-                        setattr(self, stream_attr, None)
+                    except Exception:
+                        pass
+                setattr(self, stream_attr, None)
                 self._io_locks.pop(id(stream), None)
 
     def _prepare(self):
@@ -396,11 +433,13 @@ class DualChannelAudioEngine:
     async def _playback_loop(self, channel):
         outgoing = channel == "outgoing"
         buffer = self.outgoing_playback_buffer if outgoing else self.incoming_playback_buffer
-        stream = self.call_virtual_mic_stream if outgoing else self.headphones_stream
         callback = self.on_outgoing_playback if outgoing else self.on_incoming_playback
         loop = asyncio.get_running_loop()
         try:
             while (self._outgoing_playback_running if outgoing else self._incoming_playback_running):
+                stream = self.call_virtual_mic_stream if outgoing else self.headphones_stream
+                if stream is None:
+                    break
                 audio, timings = buffer.pop_with_timing(self.output_chunk_size)
                 if outgoing:
                     output = audio if audio is not None else np.zeros(self.output_chunk_size, dtype=np.int16)
@@ -411,20 +450,26 @@ class DualChannelAudioEngine:
                     output, self.is_incoming_ducking = self.incoming_ducking_dsp.process(background, audio)
                 submitted_at = time.monotonic()
                 # PortAudio owns playback pacing, including silence between translated turns.
-                latency = stream.get_output_latency()
-                await loop.run_in_executor(None, self._safe_write, stream, output.tobytes())
+                try:
+                    latency = stream.get_output_latency()
+                except Exception:
+                    latency = 0.0
+                written = await loop.run_in_executor(None, self._safe_write, stream, output.tobytes())
+                if not written:
+                    break
                 if callback:
                     for timing in timings:
                         callback(timing, submitted_at, latency)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            is_active = self._outgoing_playback_running if outgoing else self._incoming_playback_running
             if outgoing:
                 self._outgoing_playback_running = False
             else:
                 self._incoming_playback_running = False
             self.output_underflows += 1
-            if self.on_audio_error:
+            if is_active and self.on_audio_error:
                 self.on_audio_error(f"Помилка відтворення {channel}: {exc}", "AUDIO_OUTPUT")
 
     async def _finish_playback(self, timeout):
@@ -683,7 +728,7 @@ class DualChannelAudioEngine:
             raise
         except Exception as exc:
             self.input_overflows += 1
-            if self.on_audio_error:
+            if active() and self.on_audio_error:
                 self.on_audio_error(f"Помилка захоплення: {exc}", "AUDIO_INPUT")
 
     async def outgoing_process_loop(self):

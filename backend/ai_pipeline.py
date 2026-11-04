@@ -62,6 +62,8 @@ class GeminiLiveAudioSession:
         self.simulated = False
         self._failed = False
         self._has_audio_input = False
+        self._drain_timeout = 10.0
+        self._drain_incomplete = False
 
         # Callbacks for audio, text, telemetry and completion
         self.on_audio_chunk: Optional[Callable[[np.ndarray, Optional[PlaybackTiming]], None]] = None
@@ -83,15 +85,16 @@ class GeminiLiveAudioSession:
         else:
             self.client = None
 
-    def set_voice(self, voice_name: str) -> None:
-        """Update voice name for speech synthesis when not running."""
+    def set_voice(self, voice_name: str) -> bool:
+        """Update voice name for speech synthesis when not running. Returns True if applied."""
         if self.is_running:
             print(f"[GeminiLiveAudioSession:{self.channel_name}] Warning: Voice change ignored during active session.")
-            return
+            return False
         if voice_name in VALID_VOICE_NAMES:
             self.voice_name = voice_name
-        else:
-            print(f"[GeminiLiveAudioSession:{self.channel_name}] Warning: Unknown voice '{voice_name}', ignoring.")
+            return True
+        print(f"[GeminiLiveAudioSession:{self.channel_name}] Warning: Unknown voice '{voice_name}', ignoring.")
+        return False
 
     def _report_error(self, message: str, error_type: str = "API_ERROR") -> None:
         """Log error and notify UI callback."""
@@ -114,17 +117,28 @@ class GeminiLiveAudioSession:
         self.capture_to_playback.add((estimated_at - timing.captured_at) * 1000)
         self.receive_to_playback.add((estimated_at - timing.received_at) * 1000)
 
-    async def finish(self, input_queue, timeout: float = 10.0):
+    async def finish(self, input_queue, timeout: float = 10.0) -> bool:
+        """Gracefully drain the session.
+
+        `timeout` bounds how long we wait for the model's final speech turn.
+        The outer guard is intentionally longer so the inner drain can expire
+        first and finish cleanly instead of being reported as a hang.
+        """
         if self._finished.is_set():
-            return not self._failed
+            return not (self._failed or self._drain_incomplete)
+        if self._failed or not self.is_running:
+            return False
+        self._drain_timeout = timeout
         try:
             await asyncio.wait_for(input_queue.put(None), timeout)
-            await asyncio.wait_for(self._finished.wait(), timeout)
+            # Grace period scales with the drain budget (capped) for socket teardown.
+            await asyncio.wait_for(self._finished.wait(), timeout + min(5.0, timeout))
         except asyncio.TimeoutError:
+            # Only a genuinely stuck session (socket teardown hang) lands here.
             self._report_error("Не отримано завершення перекладу до таймауту.", "DRAIN_TIMEOUT")
             self.stop()
             await self._finished.wait()
-        return not self._failed
+        return not (self._failed or self._drain_incomplete)
 
     def _emit_audio(self, raw: bytes, mime_type: str):
         match = re.search(r"rate=(\d+)", mime_type)
@@ -188,7 +202,7 @@ class GeminiLiveAudioSession:
         self._turn_done.clear()
         self._captured_at = self._sent_at = None
         self._first_audio = self._awaiting_response = False
-        self._failed = self._has_audio_input = False
+        self._failed = self._has_audio_input = self._drain_incomplete = False
         self._resampler = None
         self._pending_timing = None
         self.measured_latency_ms = None
@@ -259,9 +273,10 @@ class GeminiLiveAudioSession:
                     while self.is_running:
                         chunk = await input_queue.get()
                         if chunk is None:
-                            # A completion from an earlier reply must not authorize
-                            # cancelling a final reply that is still in flight.
-                            self._turn_done.clear()
+                            # Voiced input already cleared _turn_done, so a stale completion
+                            # cannot authorize cancelling an in-flight reply. Clearing it here
+                            # unconditionally would wait for a turn that never comes when the
+                            # last reply had already completed before stop.
                             await session.send_realtime_input(audio_stream_end=True)
                             return
                         if not isinstance(chunk, CapturedAudio):
@@ -331,14 +346,17 @@ class GeminiLiveAudioSession:
                     await receiver  # Propagate failure and cancel the sender in finally.
                     raise ConnectionError("Gemini receiver stopped unexpectedly")
                 await sender
-                if self._has_audio_input:
+                # Wait only when a reply is actually pending; continuous streams (video
+                # dubbing) may never emit turn_complete, which is not an error on stop.
+                if self._awaiting_response and not self._turn_done.is_set():
                     turn_wait = asyncio.create_task(self._turn_done.wait())
                     self._tasks.add(turn_wait)
-                    done, _ = await asyncio.wait({turn_wait, receiver}, timeout=10.0, return_when=asyncio.FIRST_COMPLETED)
+                    done, _ = await asyncio.wait({turn_wait, receiver}, timeout=self._drain_timeout, return_when=asyncio.FIRST_COMPLETED)
                     if receiver in done:
                         await receiver
                     if turn_wait not in done:
-                        raise TimeoutError("Gemini did not finish the final speech turn")
+                        self._drain_incomplete = True
+                        print(f"[GeminiLive:{self.channel_name}] Final turn not completed within {self._drain_timeout:.1f}s; closing session.")
         except asyncio.CancelledError:
             raise
         except Exception as exc:

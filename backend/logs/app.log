@@ -522,3 +522,128 @@
 [2026-09-02 00:36:00,234] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
 [2026-09-02 00:36:14,884] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Puck).
 [2026-09-02 00:36:14,884] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Puck).
+[2026-10-30 16:06:21,320] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:06:21,956] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:06:22,204] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:06:22,204] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:08:54,330] [INFO] [gemini_translator]: [sample] Запуск семплу 'IT Daily Standup' (голос: Aoede).
+[2026-10-30 16:08:54,330] [INFO] [gemini_translator]: [sample] Запуск семплу 'IT Daily Standup' (голос: Aoede).
+[2026-10-30 16:09:05,811] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:09:05,811] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:09:06,138] [INFO] [gemini_translator]: [sample] Відтворення семплу зупинено через помилку.
+[2026-10-30 16:09:06,138] [INFO] [gemini_translator]: [sample] Відтворення семплу зупинено через помилку.
+[2026-10-30 16:09:14,625] [INFO] [gemini_translator]: [sample] Запуск семплу 'IT Daily Standup' (голос: Aoede).
+[2026-10-30 16:09:14,625] [INFO] [gemini_translator]: [sample] Запуск семплу 'IT Daily Standup' (голос: Aoede).
+[2026-10-30 16:09:41,966] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:09:41,966] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:09:43,190] [INFO] [gemini_translator]: [sample] Відтворення семплу зупинено через помилку.
+[2026-10-30 16:09:43,190] [INFO] [gemini_translator]: [sample] Відтворення семплу зупинено через помилку.
+[2026-10-30 16:10:17,836] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:10:17,836] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:10:18,483] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:10:18,483] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:10:30,850] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:10:30,850] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:10:49,731] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:10:49,731] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:11:09,392] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:11:09,392] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-10-30 16:12:12,506] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:12:12,506] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:12:13,764] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:12:13,764] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:12:47,490] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Puck).
+[2026-10-30 16:12:47,490] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Puck).
+[2026-10-30 16:13:28,747] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:13:28,747] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:13:29,969] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:13:29,969] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:13:46,701] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Kore).
+[2026-10-30 16:13:46,701] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Kore).
+[2026-10-30 16:14:13,637] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:14:13,637] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:14:14,900] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:14:14,900] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:14:25,585] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Fenrir).
+[2026-10-30 16:14:25,585] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Fenrir).
+[2026-10-30 16:18:01,984] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:18:01,984] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:18:03,137] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:18:03,137] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-10-30 16:19:40,636] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:40,636] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:41,025] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:19:41,025] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:19:41,045] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:19:41,045] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:19:48,034] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:48,034] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:48,427] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:19:48,427] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_INPUT] Помилка захоплення: [Errno -9981] Input overflowed
+[2026-10-30 16:19:49,972] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:49,972] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:19:50,380] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:19:50,380] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:20:00,398] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:20:00,398] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:20:52,789] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:20:52,789] [INFO] [gemini_translator]: [call] Запуск дзвінка (мова: es, вихідний голос: Puck, вхідний: Aoede).
+[2026-10-30 16:20:53,203] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:20:53,203] [ERROR] [gemini_translator]: [GeminiAPI:AUDIO_OUTPUT] Помилка відтворення outgoing: [Errno -9988] Stream closed
+[2026-10-30 16:21:03,220] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:21:03,220] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:21:03,221] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:21:03,221] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-10-30 16:28:20,798] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:20,978] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:20,978] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:33,717] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:33,888] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:33,888] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:37,081] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:37,260] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:37,260] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:45,144] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:45,316] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:45,316] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:55,565] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:55,739] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:28:55,739] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:04,438] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:04,603] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:04,603] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:12,366] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:12,534] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:12,534] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:25,312] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:25,480] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-10-30 16:29:25,480] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:33:10,717] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:33:11,340] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:33:11,560] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:33:11,560] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:34:53,057] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:34:53,057] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:36:07,903] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-11-04 12:36:07,903] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-11-04 12:36:08,686] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:36:08,686] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:36:16,572] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:36:16,572] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:40:11,755] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-11-04 12:40:11,755] [ERROR] [gemini_translator]: [GeminiAPI:DRAIN_TIMEOUT] Не отримано завершення перекладу до таймауту.
+[2026-11-04 12:40:12,550] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:40:12,550] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:43:27,854] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:43:27,854] [INFO] [gemini_translator]: [dubbing] Запуск дублювання відео (джерело: en, голос дубляжу: Aoede).
+[2026-11-04 12:43:29,461] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:43:29,461] [INFO] [gemini_translator]: [dubbing] Дублювання відео зупинено.
+[2026-11-04 12:46:05,193] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:05,358] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:05,358] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:19,230] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:19,398] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:19,398] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:43,836] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:44,002] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.
+[2026-11-04 12:46:44,002] [INFO] [gemini_translator]: [system] Сервер перекладача успішно ініціалізовано.

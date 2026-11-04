@@ -417,22 +417,25 @@ def get_logs():
 
 session_stop_lock = asyncio.Lock()
 
-async def finish_audio_tasks(tasks, sessions):
+async def finish_audio_tasks(tasks, sessions, drain_timeout: float = 10.0):
     captures = [task for task in tasks if task.get_name().startswith("capture-")]
     if captures:
         await asyncio.gather(*captures, return_exceptions=True)
-    results = await asyncio.gather(*(session.finish(queue) for session, queue in sessions))
+    results = await asyncio.gather(*(session.finish(queue, drain_timeout) for session, queue in sessions))
     return all(results)
 
 async def stop_failed_session():
-    if state.is_call_active:
-        await stop_call()
-    elif state.is_dubbing_active:
-        await stop_dubbing()
-    elif state.is_testing_active:
-        await stop_sample_test()
-    elif state.is_mic_test_active:
-        await stop_mic_test_endpoint()
+    try:
+        if state.is_call_active:
+            await stop_call()
+        elif state.is_dubbing_active:
+            await stop_dubbing()
+        elif state.is_testing_active:
+            await stop_sample_test()
+        elif state.is_mic_test_active:
+            await stop_mic_test_endpoint()
+    except Exception as e:
+        logger.error(f"Помилка при зупинці сесії після збою: {e}")
 
 @app.post("/call/start")
 async def start_call(req: CallStartRequest):
@@ -540,7 +543,8 @@ async def start_dubbing(req: DubbingStartRequest):
     api_key = req.api_key or os.environ.get("GEMINI_API_KEY", "")
     incoming_ai.set_api_key(api_key)
     incoming_ai.target_lang = "uk"
-    incoming_ai.set_voice(req.voice_name)
+    if not incoming_ai.set_voice(req.voice_name):
+        add_log_entry("WARN", f"Голос '{req.voice_name}' не застосовано (попередня сесія ще активна).", "dubbing")
 
     state.partner_lang = req.source_lang
     state.incoming_voice = req.voice_name
@@ -589,7 +593,9 @@ async def stop_dubbing():
         state.is_stopping = True
         try:
             audio_engine.is_dubbing_running = False
-            complete = await finish_audio_tasks(active_dubbing_tasks, [(incoming_ai, audio_engine.incoming_input_queue)])
+            # Video audio is continuous: the model may never close the last turn,
+            # so keep the drain short — the user explicitly asked to stop.
+            complete = await finish_audio_tasks(active_dubbing_tasks, [(incoming_ai, audio_engine.incoming_input_queue)], drain_timeout=3.0)
             played = await audio_engine.graceful_stop_dubbing()
             complete = complete and played
         finally:

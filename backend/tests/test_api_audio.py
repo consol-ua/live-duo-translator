@@ -25,8 +25,10 @@ class ApiAudioTests(unittest.IsolatedAsyncioTestCase):
         # Avoid hardware and writing to the tracked application log when importing main.
         with patch('audio_engine.pyaudio.PyAudio', return_value=self.pa), patch(
             'logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()
-        ):
+        ), patch.dict('os.environ', {'GEMINI_API_KEY': ''}):
             self.main = importlib.import_module('main')
+        self.env_patcher = patch.dict('os.environ', {'GEMINI_API_KEY': ''})
+        self.env_patcher.start()
         from audio_engine import DualChannelAudioEngine
         with patch('audio_engine.pyaudio.PyAudio', return_value=self.pa):
             self.main.audio_engine = DualChannelAudioEngine()
@@ -54,6 +56,7 @@ class ApiAudioTests(unittest.IsolatedAsyncioTestCase):
         engine.mic_test_file_path = Path(self.temp.name) / 'mic.wav'
 
     async def asyncTearDown(self):
+        self.env_patcher.stop()
         self.main.outgoing_ai.stop()
         self.main.incoming_ai.stop()
         for tasks in (self.main.active_call_tasks, self.main.active_dubbing_tasks,
