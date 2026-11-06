@@ -11,3 +11,6 @@ backend/build
 .env
 
 .agents/
+.run/
+backend/logs/*.log
+

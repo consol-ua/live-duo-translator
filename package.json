@@ -4,7 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "start": "./start.sh",
+    "stop": "./stop.sh",
+    "restart": "./scripts/manage.sh restart",
+    "status": "./scripts/manage.sh status",
+    "logs": "./scripts/manage.sh logs",
     "dev": "vite",
+    "dev:all": "./start.sh -f",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
