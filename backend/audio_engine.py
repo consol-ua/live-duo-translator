@@ -6,10 +6,13 @@ import time
 from pathlib import Path
 import numpy as np
 import pyaudio
+import logging
 from typing import List, Dict, Optional, Callable
 import threading
 from collections import deque
 from audio_support import AudioInputQueue, AudioOverload, PlaybackTiming, StreamingResampler
+
+logger = logging.getLogger(__name__)
 
 
 class AudioStreamBuffer:
@@ -305,7 +308,32 @@ class DualChannelAudioEngine:
         """List all available audio input and output devices."""
         devices: List[Dict[str, str | int]] = []
         with self._stream_lock:
-            device_count = self.p.get_device_count()
+            # Re-initialize PyAudio if no active streams are running to refresh CoreAudio devices (e.g. Bluetooth).
+            has_active_streams = (
+                self.is_call_running
+                or self.is_dubbing_running
+                or self.is_sample_running
+                or self.is_mic_test_running
+                or any(
+                    getattr(self, attr, None) is not None
+                    for attr in (
+                        "my_mic_stream",
+                        "call_virtual_mic_stream",
+                        "call_input_stream",
+                        "headphones_stream",
+                        "mic_test_stream",
+                    )
+                )
+            )
+            if not has_active_streams:
+                try:
+                    if hasattr(self.p, "terminate"):
+                        self.p.terminate()
+                    self.p = pyaudio.PyAudio()
+                except Exception as exc:
+                    logger.warning("Failed to refresh PyAudio devices: %s", exc)
+
+            device_count = self.p.get_device_count() if hasattr(self.p, "get_device_count") else 0
             for i in range(device_count):
                 try:
                     info = self.p.get_device_info_by_index(i)

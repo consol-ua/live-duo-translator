@@ -133,6 +133,13 @@ class ApiAudioTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.streams[0].closed)
         self.assertFalse(self.main.state.is_call_active)
 
+    async def test_list_devices_refreshes_pyaudio_when_idle(self):
+        terminated = []
+        self.pa.terminate = lambda: terminated.append(True)
+        response = await self.client.get('/devices')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(len(terminated) > 0)
+
 
 if __name__ == '__main__':
     unittest.main()

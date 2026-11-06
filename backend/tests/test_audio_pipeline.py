@@ -145,7 +145,11 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.session = GeminiLiveAudioSession(api_key='')
         self.fake = FakeLiveSession()
         self.session.api_key = 'test-placeholder'
-        self.session.client = SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=lambda **kwargs: self.fake)))
+        self.connect_kwargs = {}
+        def fake_connect(**kwargs):
+            self.connect_kwargs = kwargs
+            return self.fake
+        self.session.client = SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=fake_connect)))
         self.queue = AudioInputQueue(16000, 320)
         self.errors = []
         self.audio = []
@@ -256,6 +260,12 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.task, 1)
         self.assertTrue(self.fake.sent.empty())
         self.assertEqual(self.errors[0][1], 'SESSION_ERROR')
+
+    async def test_live_config_disables_interruption(self):
+        config = self.connect_kwargs.get('config')
+        self.assertIsNotNone(config)
+        self.assertIsNotNone(config.realtime_input_config)
+        self.assertEqual(config.realtime_input_config.activity_handling, types.ActivityHandling.NO_INTERRUPTION)
 
     async def test_cancellation_leaves_no_workers(self):
         await self.speak()

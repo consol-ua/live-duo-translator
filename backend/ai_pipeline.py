@@ -265,6 +265,9 @@ class GeminiLiveAudioSession:
             ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                activity_handling=types.ActivityHandling.NO_INTERRUPTION,
+            ),
         )
 
         try:

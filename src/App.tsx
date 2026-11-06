@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff,
   Video,
+  RefreshCw,
 } from "lucide-react";
 
 export const App: React.FC = () => {
@@ -66,6 +67,25 @@ export const App: React.FC = () => {
 
         {/* Global Status Indicators */}
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={audioDevices.refreshDevices}
+            disabled={
+              audioDevices.isRefreshing ||
+              backendState.is_call_active ||
+              backendState.is_dubbing_active
+            }
+            title="Оновити список аудіопристроїв (Bluetooth, USB, BlackHole)"
+            className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white transition-all disabled:opacity-50"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${
+                audioDevices.isRefreshing ? "animate-spin text-indigo-400" : "text-slate-400"
+              }`}
+            />
+            <span>{audioDevices.isRefreshing ? "Пошук…" : "Оновити пристрої"}</span>
+          </button>
+
           <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
             <span
               className={`inline-block w-2.5 h-2.5 rounded-full ${
@@ -218,6 +238,8 @@ export const App: React.FC = () => {
             onJitterBufferChange={sessionControls.handleJitterBufferChange}
             state={backendState}
             isLoading={sessionControls.isLoading}
+            onRefreshDevices={audioDevices.refreshDevices}
+            isRefreshingDevices={audioDevices.isRefreshing}
             onToggleCall={() => sessionControls.handleToggleCall({
               my_mic_index: audioDevices.myMicIndex,
               call_virtual_mic_index: audioDevices.callVirtualMicIndex,
